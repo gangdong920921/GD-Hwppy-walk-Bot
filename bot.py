@@ -105,11 +105,11 @@ async def my(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("걸음수", steps))
-    app.add_handler(CommandHandler("순위", weekly))
-    app.add_handler(CommandHandler("전체순위", alltime))
-    app.add_handler(CommandHandler("내기록", my))
+    app.add_handler(CommandHandler("steps",   cmd_steps))
+app.add_handler(CommandHandler("rank",    cmd_ranking))
+app.add_handler(CommandHandler("total",   cmd_total_ranking))
+app.add_handler(CommandHandler("me",      cmd_my_record))
+app.add_handler(CommandHandler("help",    cmd_help))
 
     print("봇 실행 중...")
     app.run_polling()
