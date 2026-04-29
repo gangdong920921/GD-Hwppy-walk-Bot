@@ -3,33 +3,47 @@ import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# 🔥 네 Apps Script URL (이미 적용 완료)
+# 🔥 Apps Script URL
 APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxlX_P6S7vVcCcKcFTK4lE2nbeoUpmwcwi0fw-HVaXs4a0gWZIP1fDJ8TgPSsaWMg/exec"
 
-# 👉 여기에 BotFather 토큰 넣기
+# 👉 BotFather 토큰
 TOKEN = "YOUR_TELEGRAM_TOKEN"
 
 logging.basicConfig(level=logging.INFO)
 
+
 # /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👟 걷기 챌린지 시작!\n\n"
-        "/걸음수 8000\n"
-        "/순위\n"
-        "/전체순위\n"
-        "/내기록"
+        "/steps 8000  - 오늘 걸음수 저장\n"
+        "/rank         - 이번주 TOP 20\n"
+        "/total        - 전체 누적 TOP 20\n"
+        "/me           - 내 기록 보기\n"
+        "/help         - 도움말"
     )
 
-# /걸음수
-async def steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# /help
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📖 명령어 안내\n\n"
+        "/steps 8000 → 8000걸음 저장\n"
+        "/rank → 이번주 순위\n"
+        "/total → 전체 순위\n"
+        "/me → 내 누적 기록"
+    )
+
+
+# /steps
+async def cmd_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("❗ 사용법: /걸음수 8000")
+        await update.message.reply_text("❗ 사용법: /steps 8000")
         return
 
     try:
         step = int(context.args[0])
-    except:
+    except ValueError:
         await update.message.reply_text("❗ 숫자만 입력해주세요")
         return
 
@@ -38,78 +52,91 @@ async def steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payload = {
         "user_id": user.id,
         "name": user.first_name,
-        "steps": step
+        "steps": step,
     }
 
     try:
-        res = requests.post(APPS_SCRIPT_URL, json=payload)
+        res = requests.post(APPS_SCRIPT_URL, json=payload, timeout=10)
         if res.status_code == 200:
             await update.message.reply_text(f"✅ {step}걸음 저장 완료!")
         else:
             await update.message.reply_text("❌ 저장 실패")
-    except:
+    except Exception as e:
+        logging.exception("steps error")
         await update.message.reply_text("❌ 서버 오류")
 
-# /순위
-async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# /rank (이번주 순위)
+async def cmd_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        res = requests.get(APPS_SCRIPT_URL + "?type=weekly")
+        res = requests.get(APPS_SCRIPT_URL + "?type=weekly", timeout=10)
         data = res.json()
+
+        if not data:
+            await update.message.reply_text("아직 이번주 기록이 없어요 😢")
+            return
 
         msg = "🏆 이번주 TOP 20\n\n"
         for i, u in enumerate(data, 1):
             msg += f"{i}. {u['name']} - {u['total']}걸음\n"
 
         await update.message.reply_text(msg)
-    except:
+    except Exception:
+        logging.exception("ranking error")
         await update.message.reply_text("❌ 불러오기 실패")
 
-# /전체순위
-async def alltime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# /total (전체 순위)
+async def cmd_total_ranking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        res = requests.get(APPS_SCRIPT_URL + "?type=all")
+        res = requests.get(APPS_SCRIPT_URL + "?type=all", timeout=10)
         data = res.json()
+
+        if not data:
+            await update.message.reply_text("아직 기록이 없어요 😢")
+            return
 
         msg = "🏆 전체 순위 TOP 20\n\n"
         for i, u in enumerate(data, 1):
             msg += f"{i}. {u['name']} - {u['total']}걸음\n"
 
         await update.message.reply_text(msg)
-    except:
+    except Exception:
+        logging.exception("total error")
         await update.message.reply_text("❌ 불러오기 실패")
 
-# /내기록 (개선 버전)
-async def my(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+# /me (내 기록)
+async def cmd_my_record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        res = requests.get(APPS_SCRIPT_URL + "?type=all")
+        res = requests.get(APPS_SCRIPT_URL + "?type=all", timeout=10)
         data = res.json()
 
         user = update.message.from_user
+        mine = [u for u in data if u["name"] == user.first_name]
 
-        # 이름 기준 (현재 구조)
-        my = [u for u in data if u["name"] == user.first_name]
-
-        if not my:
+        if not mine:
             await update.message.reply_text("기록 없음 😢")
             return
 
-        total = my[0]["total"]
-
+        total = mine[0]["total"]
         await update.message.reply_text(
             f"📊 내 기록\n\n총 걸음수: {total}"
         )
-    except:
+    except Exception:
+        logging.exception("me error")
         await update.message.reply_text("❌ 조회 실패")
 
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("steps",   cmd_steps))
-    app.add_handler(CommandHandler("rank",    cmd_ranking))
-    app.add_handler(CommandHandler("total",   cmd_total_ranking))
-    app.add_handler(CommandHandler("me",      cmd_my_record))
-    app.add_handler(CommandHandler("help",    cmd_help))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help",  cmd_help))
+    app.add_handler(CommandHandler("steps", cmd_steps))
+    app.add_handler(CommandHandler("rank",  cmd_ranking))
+    app.add_handler(CommandHandler("total", cmd_total_ranking))
+    app.add_handler(CommandHandler("me",    cmd_my_record))
 
     print("봇 실행 중...")
     app.run_polling()
