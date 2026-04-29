@@ -1,1 +1,1 @@
-# GD-Hwppy-walk-Bot
+# GD-Happy-walk-Bot
