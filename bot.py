@@ -1,13 +1,12 @@
+import os
 import logging
 import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# 🔥 Apps Script URL
-APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxlX_P6S7vVcCcKcFTK4lE2nbeoUpmwcwi0fw-HVaXs4a0gWZIP1fDJ8TgPSsaWMg/exec"
-
-# 👉 BotFather 토큰
-TOKEN = "YOUR_TELEGRAM_TOKEN"
+# 🔥 환경변수에서 가져오기 (Render 대시보드 → Environment)
+TOKEN = os.environ["TELEGRAM_TOKEN"]
+APPS_SCRIPT_URL = os.environ["APPS_SCRIPT_URL"]
 
 logging.basicConfig(level=logging.INFO)
 
@@ -61,7 +60,7 @@ async def cmd_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ {step}걸음 저장 완료!")
         else:
             await update.message.reply_text("❌ 저장 실패")
-    except Exception as e:
+    except Exception:
         logging.exception("steps error")
         await update.message.reply_text("❌ 서버 오류")
 
