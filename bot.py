@@ -1,10 +1,9 @@
 """
-걷기 챌린지 텔레그램 봇 (최종 안정화 버전)
-- 신규 사용자: 소속 → 이름 → 부 → 팀 → 구역 등록
-- 등록된 사용자: 사진 → 걸음수 → km
-- 1km당 27원 적립
-- 사진은 Google Drive에 저장 (Apps Script 처리)
-- Render Web Service 호환 (더미 웹서버 포함)
+걷기 챌린지 텔레그램 봇
+- 신규: 소속 → 이름 → (교역자: 부서 / 그 외: 부/팀/구역)
+- 등록완료: 사진 → 걸음수 → 자동 거리 계산 → 적립금
+- 1걸음 = 65cm = 0.00065km
+- 1걸음당 0.026원 적립
 """
 
 import os
@@ -27,7 +26,8 @@ from telegram.ext import (
 # ─────────────── 설정 ───────────────
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 APPS_SCRIPT_URL = os.environ["APPS_SCRIPT_URL"]
-RATE_PER_KM = 27  # 1km당 적립금 (원)
+RATE_PER_STEP = 0.026     # 1걸음당 적립금 (원)
+STEP_LENGTH_M = 0.65      # 1걸음 = 65cm
 
 GROUPS = ["부녀회", "장년회", "청년회", "자문회", "교역자"]
 
@@ -37,7 +37,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ─────────────── 키보드 ───────────────
 def group_keyboard():
-    """소속 선택 버튼"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👩 부녀회", callback_data="grp:부녀회"),
          InlineKeyboardButton("👨 장년회", callback_data="grp:장년회")],
@@ -48,7 +47,6 @@ def group_keyboard():
 
 
 def main_menu_keyboard():
-    """결과 화면 메뉴"""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🏆 이번주 순위", callback_data="rank"),
@@ -69,7 +67,6 @@ def restart_keyboard():
 
 # ─────────────── 헬퍼 ───────────────
 def fetch_profile(user_id: int):
-    """Apps Script에서 프로필 조회. 없으면 None"""
     try:
         res = requests.get(
             f"{APPS_SCRIPT_URL}?type=profile&user_id={user_id}", timeout=15
@@ -83,7 +80,12 @@ def fetch_profile(user_id: int):
 
 
 def format_team_label(profile: dict) -> str:
-    """프로필 → '2부 3팀 5구역' 형태"""
+    """프로필 → '2부 3팀 5구역' 또는 '교육부' 형태"""
+    group = profile.get("group", "")
+    if group == "교역자":
+        dept = profile.get("dept", "")
+        return dept if dept else ""
+
     parts = []
     bu = profile.get("bu")
     team = profile.get("team")
@@ -98,7 +100,6 @@ def format_team_label(profile: dict) -> str:
 
 
 def parse_number(text: str):
-    """텍스트에서 숫자만 추출. 실패시 None"""
     cleaned = text.replace(" ", "").replace("부", "").replace("팀", "").replace("구역", "")
     try:
         n = int(cleaned)
@@ -109,6 +110,11 @@ def parse_number(text: str):
         return None
 
 
+def steps_to_km(steps: int) -> float:
+    """걸음수를 km로 환산. 1걸음=65cm"""
+    return round(steps * STEP_LENGTH_M / 1000, 2)
+
+
 # ─────────────── /start ───────────────
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -117,24 +123,25 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     profile = fetch_profile(user.id)
 
     if profile:
-        # 기존 사용자
         context.user_data["profile"] = profile
         context.user_data["stage"] = "waiting_photo"
         team_label = format_team_label(profile)
+        sub = f"({profile['group']}"
+        if team_label:
+            sub += f" / {team_label}"
+        sub += ")"
         await update.message.reply_text(
             f"👋 {profile['name']}님 안녕하세요!\n"
-            f"({profile['group']} / {team_label})\n\n"
+            f"{sub}\n\n"
             f"오늘도 걸으셨나요? 💪\n"
             f"걷기 인증사진을 올려주세요 📸\n\n"
             f"💡 정보 변경: /register\n"
             f"💡 취소: /cancel"
         )
     else:
-        # 신규 사용자
         await start_registration(update, context)
 
 
-# ─────────────── /등록 ───────────────
 async def cmd_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await start_registration(update, context)
@@ -150,23 +157,19 @@ async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
-# ─────────────── /cancel ───────────────
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text(
-        "✅ 취소되었어요.\n다시 시작하려면 /start"
-    )
+    await update.message.reply_text("✅ 취소되었어요.\n다시 시작하려면 /start")
 
 
-# ─────────────── /help ───────────────
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📖 사용 방법\n\n"
         "1️⃣ /start → 인증사진\n"
-        "2️⃣ 걸음수 입력\n"
-        "3️⃣ 거리(km) 입력\n"
-        "4️⃣ 적립금 확인! 💰\n\n"
-        f"💡 1km당 {RATE_PER_KM}원 적립\n"
+        "2️⃣ 걸음수 입력 → 거리 자동 계산\n"
+        "3️⃣ 적립금 확인! 💰\n\n"
+        f"💡 1걸음 = 65cm\n"
+        f"💡 1걸음당 {RATE_PER_STEP}원 적립\n"
         "💡 하루 여러 번 등록 가능 (누적)\n\n"
         "기타 명령어:\n"
         "/register - 정보 다시 등록\n"
@@ -177,17 +180,14 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ─────────────── 사진 받기 ───────────────
+# ─────────────── 사진 ───────────────
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
 
-    # 등록 안 된 사용자면 등록부터
     if "profile" not in context.user_data:
         profile = fetch_profile(user.id)
         if not profile:
-            await update.message.reply_text(
-                "📝 먼저 등록이 필요해요!\n/start 를 눌러주세요."
-            )
+            await update.message.reply_text("📝 먼저 등록이 필요해요!\n/start 를 눌러주세요.")
             return
         context.user_data["profile"] = profile
 
@@ -210,12 +210,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception:
         logging.exception("사진 처리 실패")
-        await update.message.reply_text(
-            "❌ 사진 처리 중 오류가 발생했어요. 다시 보내주세요!"
-        )
+        await update.message.reply_text("❌ 사진 처리 중 오류. 다시 보내주세요!")
 
 
-# ─────────────── 텍스트 받기 ───────────────
+# ─────────────── 텍스트 ───────────────
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     stage = context.user_data.get("stage")
@@ -227,12 +225,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❗ 이름은 1~20자로 입력해주세요.")
             return
         context.user_data["reg_name"] = text
-        context.user_data["stage"] = "reg_bu"
-        await update.message.reply_text(
-            f"{text}님, 반가워요! 😊\n\n"
-            f"몇 부이신가요?\n"
-            f"(숫자만 입력. 예: 2)"
-        )
+
+        if context.user_data.get("reg_group") == "교역자":
+            context.user_data["stage"] = "reg_dept"
+            await update.message.reply_text(
+                f"{text}님, 반가워요! 😊\n\n"
+                f"어느 부서이신가요?\n"
+                f"(예: 교육부, 청년부, 행정부)"
+            )
+        else:
+            context.user_data["stage"] = "reg_bu"
+            await update.message.reply_text(
+                f"{text}님, 반가워요! 😊\n\n"
+                f"몇 부이신가요?\n"
+                f"(숫자만 입력. 예: 2)"
+            )
+        return
+
+    # ── 등록: 교역자 부서 ──
+    if stage == "reg_dept":
+        if len(text) > 20 or len(text) < 1:
+            await update.message.reply_text("❗ 부서는 1~20자로 입력해주세요.")
+            return
+        context.user_data["reg_dept"] = text
+        await save_profile(update, context)
         return
 
     # ── 등록: 부 ──
@@ -243,11 +259,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         context.user_data["reg_bu"] = bu
         context.user_data["stage"] = "reg_team"
-        await update.message.reply_text(
-            f"{bu}부 ✅\n\n"
-            f"몇 팀이신가요?\n"
-            f"(숫자만 입력. 예: 3)"
-        )
+        await update.message.reply_text(f"{bu}부 ✅\n\n몇 팀이신가요?\n(숫자만 입력. 예: 3)")
         return
 
     # ── 등록: 팀 ──
@@ -258,11 +270,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         context.user_data["reg_team"] = team
         context.user_data["stage"] = "reg_gu"
-        await update.message.reply_text(
-            f"{team}팀 ✅\n\n"
-            f"몇 구역이신가요?\n"
-            f"(숫자만 입력. 예: 5)"
-        )
+        await update.message.reply_text(f"{team}팀 ✅\n\n몇 구역이신가요?\n(숫자만 입력. 예: 5)")
         return
 
     # ── 등록: 구역 → 저장 ──
@@ -275,31 +283,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await save_profile(update, context)
         return
 
-    # ── 일반 단계: 등록 안 됐으면 안내 ──
-    if "profile" not in context.user_data and stage not in ("reg_group", "reg_name", "reg_bu", "reg_team", "reg_gu"):
+    # ── 일반: 등록 안 됐으면 안내 ──
+    reg_stages = ("reg_group", "reg_name", "reg_bu", "reg_team", "reg_gu", "reg_dept")
+    if "profile" not in context.user_data and stage not in reg_stages:
         profile = fetch_profile(user.id)
         if not profile:
-            await update.message.reply_text(
-                "📝 먼저 등록이 필요해요!\n/start 를 눌러주세요."
-            )
+            await update.message.reply_text("📝 먼저 등록이 필요해요!\n/start 를 눌러주세요.")
             return
         context.user_data["profile"] = profile
 
-    # ── 시작 안 함 ──
     if not stage:
         await update.message.reply_text(
             "👋 /start 를 눌러서 시작해주세요!\n또는 인증사진을 바로 올려주셔도 돼요 📸"
         )
         return
 
-    # ── 사진 대기 중인데 텍스트 ──
     if stage == "waiting_photo":
-        await update.message.reply_text(
-            "📸 먼저 인증사진을 올려주세요!\n(취소: /cancel)"
-        )
+        await update.message.reply_text("📸 먼저 인증사진을 올려주세요!\n(취소: /cancel)")
         return
 
-    # ── 걸음수 ──
+    # ── 걸음수 → 자동 계산 후 바로 제출 ──
     if stage == "waiting_steps":
         try:
             steps = int(text.replace(",", "").replace(" ", ""))
@@ -310,24 +313,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         context.user_data["steps"] = steps
-        context.user_data["stage"] = "waiting_km"
-        await update.message.reply_text(
-            f"좋아요! 👟 {steps:,}걸음\n\n"
-            f"그럼 거리(km)는 얼마인가요? 📏\n"
-            f"(예: 5.5)"
-        )
-        return
-
-    # ── km ──
-    if stage == "waiting_km":
-        try:
-            km = float(text.replace(",", ".").replace(" ", ""))
-            if km < 0 or km > 200:
-                raise ValueError()
-        except ValueError:
-            await update.message.reply_text("❗ 거리는 숫자로! (예: 5.5)")
-            return
-
+        km = steps_to_km(steps)
         await submit_record(update, context, km)
         return
 
@@ -340,6 +326,7 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bu = context.user_data.get("reg_bu", "")
     team = context.user_data.get("reg_team", "")
     gu = context.user_data.get("reg_gu", "")
+    dept = context.user_data.get("reg_dept", "")
 
     payload = {
         "action": "register",
@@ -350,6 +337,7 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "bu": bu,
         "team": team,
         "gu": gu,
+        "dept": dept,
     }
 
     processing = await update.message.reply_text("⏳ 등록 중이에요...")
@@ -368,6 +356,7 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "bu": bu,
             "team": team,
             "gu": gu,
+            "dept": dept,
         }
         context.user_data.clear()
         context.user_data["profile"] = profile
@@ -375,28 +364,26 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         team_label = format_team_label(profile)
 
-        try:
-            await processing.delete()
-        except:
-            pass
+        try: await processing.delete()
+        except: pass
+
+        sub = group
+        if team_label:
+            sub += f" / {team_label}"
 
         await update.message.reply_text(
             f"✅ 등록 완료!\n\n"
             f"👤 {name}\n"
-            f"🏷 {group} / {team_label}\n\n"
+            f"🏷 {sub}\n\n"
             f"━━━━━━━━━━━━━━━\n"
             f"이제 걷기 인증을 시작할게요! 💪\n"
             f"인증사진을 올려주세요 📸"
         )
     except Exception:
         logging.exception("프로필 저장 실패")
-        try:
-            await processing.delete()
-        except:
-            pass
-        await update.message.reply_text(
-            "❌ 등록 실패. 다시 시도해주세요.\n/start"
-        )
+        try: await processing.delete()
+        except: pass
+        await update.message.reply_text("❌ 등록 실패. 다시 시도해주세요.\n/start")
         context.user_data.clear()
 
 
@@ -407,11 +394,10 @@ async def submit_record(update: Update, context: ContextTypes.DEFAULT_TYPE, km: 
     steps = context.user_data.get("steps", 0)
     photo_b64 = context.user_data.get("photo_b64", "")
 
-    today_money = round(km * RATE_PER_KM)
+    # 🆕 1걸음당 0.026원으로 계산
+    today_money = round(steps * RATE_PER_STEP)
 
-    processing_msg = await update.message.reply_text(
-        "⏳ 저장 중이에요... 잠시만 기다려주세요!"
-    )
+    processing_msg = await update.message.reply_text("⏳ 저장 중이에요...")
 
     payload = {
         "action": "submit",
@@ -422,6 +408,7 @@ async def submit_record(update: Update, context: ContextTypes.DEFAULT_TYPE, km: 
         "bu": profile.get("bu", ""),
         "team": profile.get("team", ""),
         "gu": profile.get("gu", ""),
+        "dept": profile.get("dept", ""),
         "steps": steps,
         "km": km,
         "money": today_money,
@@ -437,20 +424,22 @@ async def submit_record(update: Update, context: ContextTypes.DEFAULT_TYPE, km: 
         total_km = data.get("total_km", km)
         total_steps = data.get("total_steps", steps)
 
-        try:
-            await processing_msg.delete()
-        except:
-            pass
+        try: await processing_msg.delete()
+        except: pass
 
         team_label = format_team_label(profile)
+        group = profile.get("group", "")
+        sub = group
+        if team_label:
+            sub += f"/{team_label}"
 
         result_msg = (
             "🎉 *수고하셨어요!*\n\n"
             "━━━━━━━━━━━━━━━\n"
-            f"👤 {profile.get('name', '')} ({profile.get('group', '')}/{team_label})\n"
+            f"👤 {profile.get('name', '')} ({sub})\n"
             f"📸 인증 완료\n"
             f"👟 {steps:,}걸음\n"
-            f"📏 {km}km\n"
+            f"📏 {km}km (1걸음=65cm 환산)\n"
             f"💰 오늘 적립: *{today_money:,}원*\n"
             "━━━━━━━━━━━━━━━\n"
             f"💎 누적 적립금: *{total_money:,}원*\n"
@@ -465,30 +454,26 @@ async def submit_record(update: Update, context: ContextTypes.DEFAULT_TYPE, km: 
         )
     except Exception:
         logging.exception("저장 실패")
-        try:
-            await processing_msg.delete()
-        except:
-            pass
+        try: await processing_msg.delete()
+        except: pass
         await update.message.reply_text(
-            "❌ 저장 중 오류가 발생했어요. 다시 시도해주세요!",
+            "❌ 저장 실패. 다시 시도해주세요!",
             reply_markup=restart_keyboard(),
         )
 
-    # 기록 데이터만 초기화 (프로필은 유지)
     keep_profile = context.user_data.get("profile")
     context.user_data.clear()
     if keep_profile:
         context.user_data["profile"] = keep_profile
 
 
-# ─────────────── 버튼 콜백 ───────────────
+# ─────────────── 버튼 ───────────────
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     action = query.data
     user = query.from_user
 
-    # 소속 선택
     if action.startswith("grp:"):
         group = action.split(":", 1)[1]
         context.user_data["reg_group"] = group
@@ -573,9 +558,13 @@ async def send_my_record(query, user):
         name = data.get("name", "")
         group = data.get("group", "")
         team_label = format_team_label(data)
+        sub = group
+        if team_label:
+            sub += f" / {team_label}"
+
         msg = (
             f"📊 *{name}님의 기록*\n"
-            f"({group} / {team_label})\n\n"
+            f"({sub})\n\n"
             f"💎 누적 적립금: *{data.get('total_money', 0):,}원*\n"
             f"🚶 누적 거리: {data.get('total_km', 0)}km\n"
             f"👟 누적 걸음: {data.get('total_steps', 0):,}걸음\n"
@@ -589,14 +578,12 @@ async def send_my_record(query, user):
 
 # ─────────────── 명령어 단축 ───────────────
 async def cmd_rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    class FakeQuery:
-        message = update.message
+    class FakeQuery: message = update.message
     await send_ranking(FakeQuery(), "weekly", "🏆 이번주 TOP 20")
 
 
 async def cmd_total(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    class FakeQuery:
-        message = update.message
+    class FakeQuery: message = update.message
     await send_ranking(FakeQuery(), "all", "💎 전체 누적 TOP 20")
 
 
@@ -607,26 +594,25 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_my_record(FakeQuery(), update.message.from_user)
 
 
-# ─────────────── Render Web Service용 더미 서버 ───────────────
+# ─────────────── 더미 서버 (Render Web Service용) ───────────────
 class HealthHandler(http.server.BaseHTTPRequestHandler):
-    """Render 포트 체크용. 실제 기능 없음."""
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
         self.wfile.write(b"Bot is running")
-
     def log_message(self, format, *args):
-        return  # 로그 시끄러운 거 끄기
+        return
+
 
 class ReusableTCPServer(socketserver.TCPServer):
-    """포트 재사용 허용 (재배포 시 'Address already in use' 방지)"""
     allow_reuse_address = True
-    
+
+
 def start_dummy_server():
     port = int(os.environ.get("PORT", 10000))
     try:
-        with socketserver.TCPServer(("0.0.0.0", port), HealthHandler) as httpd:
+        with ReusableTCPServer(("0.0.0.0", port), HealthHandler) as httpd:
             print(f"더미 웹서버 실행 중 (포트 {port})")
             httpd.serve_forever()
     except Exception as e:
@@ -635,13 +621,10 @@ def start_dummy_server():
 
 # ─────────────── 메인 ───────────────
 def main():
-    # 1) 더미 웹서버 (Render 포트 검사 통과용)
     threading.Thread(target=start_dummy_server, daemon=True).start()
 
-    # 2) 텔레그램 봇
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # 명령어
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("register", cmd_register))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
@@ -650,17 +633,11 @@ def main():
     app.add_handler(CommandHandler("rank", cmd_rank))
     app.add_handler(CommandHandler("total", cmd_total))
 
-    # 사진
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-    # 텍스트 (명령어 제외)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    # 버튼
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     print("봇 실행 중...")
-    # drop_pending_updates=True : 이전 인스턴스의 큐를 지워서 충돌 방지
     app.run_polling(drop_pending_updates=True)
 
 
