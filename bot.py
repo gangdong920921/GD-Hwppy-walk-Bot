@@ -126,7 +126,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"({profile['group']} / {team_label})\n\n"
             f"오늘도 걸으셨나요? 💪\n"
             f"걷기 인증사진을 올려주세요 📸\n\n"
-            f"💡 정보 변경: /등록\n"
+            f"💡 정보 변경: /register\n"
             f"💡 취소: /cancel"
         )
     else:
@@ -169,7 +169,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 1km당 {RATE_PER_KM}원 적립\n"
         "💡 하루 여러 번 등록 가능 (누적)\n\n"
         "기타 명령어:\n"
-        "/등록 - 정보 다시 등록\n"
+        "/register - 정보 다시 등록\n"
         "/cancel - 진행 취소\n"
         "/me - 내 기록\n"
         "/rank - 이번주 순위\n"
@@ -619,7 +619,10 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return  # 로그 시끄러운 거 끄기
 
-
+class ReusableTCPServer(socketserver.TCPServer):
+    """포트 재사용 허용 (재배포 시 'Address already in use' 방지)"""
+    allow_reuse_address = True
+    
 def start_dummy_server():
     port = int(os.environ.get("PORT", 10000))
     try:
@@ -641,7 +644,6 @@ def main():
     # 명령어
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("register", cmd_register))
-    app.add_handler(CommandHandler("등록", cmd_register))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("me", cmd_me))
