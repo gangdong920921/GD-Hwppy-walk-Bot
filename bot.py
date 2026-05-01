@@ -1,9 +1,8 @@
 """
-걷기 챌린지 텔레그램 봇
-- 신규: 소속 → 이름 → (교역자: 부서 / 그 외: 부/팀/구역)
-- 등록완료: 사진 → 걸음수 → 자동 거리 계산 → 적립금
-- 1걸음 = 65cm = 0.00065km
-- 1걸음당 0.026원 적립
+걷기 챌린지 텔레그램 봇 (최종 안정화 버전)
+- 신규: 소속 → 이름 → (교역자: 부서 / 청년회: 부 → 구역 / 그 외: 부 → 팀 → 구역)
+- 등록완료: 사진 → 걸음수 → 자동 거리 계산
+- 1걸음 = 65cm = 0.026원
 """
 
 import os
@@ -26,8 +25,8 @@ from telegram.ext import (
 # ─────────────── 설정 ───────────────
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 APPS_SCRIPT_URL = os.environ["APPS_SCRIPT_URL"]
-RATE_PER_STEP = 0.026     # 1걸음당 적립금 (원)
-STEP_LENGTH_M = 0.65      # 1걸음 = 65cm
+RATE_PER_STEP = 0.026
+STEP_LENGTH_M = 0.65
 
 GROUPS = ["부녀회", "장년회", "청년회", "자문회", "교역자"]
 
@@ -111,7 +110,6 @@ def parse_number(text: str):
 
 
 def steps_to_km(steps: int) -> float:
-    """걸음수를 km로 환산. 1걸음=65cm"""
     return round(steps * STEP_LENGTH_M / 1000, 2)
 
 
@@ -226,7 +224,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         context.user_data["reg_name"] = text
 
-        if context.user_data.get("reg_group") == "교역자":
+        group = context.user_data.get("reg_group")
+        if group == "교역자":
             context.user_data["stage"] = "reg_dept"
             await update.message.reply_text(
                 f"{text}님, 반가워요! 😊\n\n"
@@ -234,6 +233,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"(예: 교육부, 청년부, 행정부)"
             )
         else:
+            # 부녀회/장년회/청년회/자문회 모두 부부터 시작
             context.user_data["stage"] = "reg_bu"
             await update.message.reply_text(
                 f"{text}님, 반가워요! 😊\n\n"
@@ -258,8 +258,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❗ 숫자만 입력해주세요. (예: 2)")
             return
         context.user_data["reg_bu"] = bu
-        context.user_data["stage"] = "reg_team"
-        await update.message.reply_text(f"{bu}부 ✅\n\n몇 팀이신가요?\n(숫자만 입력. 예: 3)")
+
+        # 🆕 청년회는 팀 건너뛰고 바로 구역으로!
+        group = context.user_data.get("reg_group")
+        if group == "청년회":
+            context.user_data["stage"] = "reg_gu"
+            await update.message.reply_text(
+                f"{bu}부 ✅\n\n몇 구역이신가요?\n(숫자만 입력. 예: 5)"
+            )
+        else:
+            context.user_data["stage"] = "reg_team"
+            await update.message.reply_text(
+                f"{bu}부 ✅\n\n몇 팀이신가요?\n(숫자만 입력. 예: 3)"
+            )
         return
 
     # ── 등록: 팀 ──
@@ -302,7 +313,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📸 먼저 인증사진을 올려주세요!\n(취소: /cancel)")
         return
 
-    # ── 걸음수 → 자동 계산 후 바로 제출 ──
     if stage == "waiting_steps":
         try:
             steps = int(text.replace(",", "").replace(" ", ""))
@@ -351,12 +361,8 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise Exception(data.get("error", "unknown"))
 
         profile = {
-            "group": group,
-            "name": name,
-            "bu": bu,
-            "team": team,
-            "gu": gu,
-            "dept": dept,
+            "group": group, "name": name,
+            "bu": bu, "team": team, "gu": gu, "dept": dept,
         }
         context.user_data.clear()
         context.user_data["profile"] = profile
@@ -394,7 +400,6 @@ async def submit_record(update: Update, context: ContextTypes.DEFAULT_TYPE, km: 
     steps = context.user_data.get("steps", 0)
     photo_b64 = context.user_data.get("photo_b64", "")
 
-    # 🆕 1걸음당 0.026원으로 계산
     today_money = round(steps * RATE_PER_STEP)
 
     processing_msg = await update.message.reply_text("⏳ 저장 중이에요...")
@@ -594,13 +599,19 @@ async def cmd_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_my_record(FakeQuery(), update.message.from_user)
 
 
-# ─────────────── 더미 서버 (Render Web Service용) ───────────────
+# ─────────────── 더미 서버 ───────────────
 class HealthHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"Bot is running")
+        html = """<!DOCTYPE html><html><head><meta charset='utf-8'>
+<title>해피 워크 챌린지 봇</title></head>
+<body style='font-family:sans-serif;text-align:center;padding:50px;'>
+<h1>🚶 해피 워크 챌린지</h1>
+<p>봇이 정상 작동 중입니다 ✅</p>
+</body></html>"""
+        self.wfile.write(html.encode("utf-8"))
     def log_message(self, format, *args):
         return
 
@@ -619,8 +630,19 @@ def start_dummy_server():
         logging.exception(f"더미 서버 에러: {e}")
 
 
+# ─────────────── 좀비 봇 정리 ───────────────
+def cleanup_telegram():
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=true"
+        res = requests.get(url, timeout=10)
+        logging.info(f"좀비 폴링 정리: {res.json()}")
+    except Exception as e:
+        logging.warning(f"좀비 정리 실패 (무시하고 계속): {e}")
+
+
 # ─────────────── 메인 ───────────────
 def main():
+    cleanup_telegram()
     threading.Thread(target=start_dummy_server, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
@@ -638,7 +660,23 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     print("봇 실행 중...")
-    app.run_polling(drop_pending_updates=True)
+
+    while True:
+        try:
+            app.run_polling(drop_pending_updates=True, close_loop=False)
+            break
+        except Exception as e:
+            logging.exception(f"봇 폴링 에러: {e}")
+            err_str = str(e).lower()
+            if "conflict" in err_str:
+                logging.warning("⚠️ Conflict 감지, 좀비 정리 후 재시작...")
+                import time
+                time.sleep(5)
+                cleanup_telegram()
+                time.sleep(3)
+                continue
+            else:
+                raise
 
 
 if __name__ == "__main__":
