@@ -53,7 +53,7 @@ def main_menu_keyboard():
         ],
         [
             InlineKeyboardButton("📊 내 기록", callback_data="me"),
-            InlineKeyboardButton("➕ 추가 등록", callback_data="restart"),
+            InlineKeyboardButton("➕ 다음기록 넣기", callback_data="restart"),
         ],
     ])
 
@@ -486,7 +486,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             f"✅ {group} 선택!\n\n"
             f"이름을 알려주세요. 😊\n"
-            f"(예: 박윤정)"
+            f"(예: 김강동)"
         )
         return
 
