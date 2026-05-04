@@ -1,7 +1,9 @@
 """
-걷기 챌린지 텔레그램 봇 (최종 안정화 버전)
-- 신규: 소속 → 이름 → (교역자: 부서 / 청년회: 부 → 구역 / 그 외: 부 → 팀 → 구역)
-- 등록완료: 사진 → 걸음수 → 자동 거리 계산
+걷기 챌린지 텔레그램 봇 (최종)
+- 부녀회: 숫자(부) → 팀 → 구역 / [👑회장단][🌱새신자부][✨3040부] 버튼
+- 장년회/자문회: 숫자(부) → 팀 → 구역 / [👑회장단][🌱새신자부] 버튼
+- 청년회: 부 버튼(1~7부, 대학부, 새신자부, 기능과) → 구역 또는 부서
+- 교역자: 부서 텍스트
 - 1걸음 = 65cm = 0.026원
 """
 
@@ -45,6 +47,52 @@ def group_keyboard():
     ])
 
 
+def youth_bu_keyboard():
+    """청년회 부 선택"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1부", callback_data="ybu:1부"),
+         InlineKeyboardButton("2부", callback_data="ybu:2부"),
+         InlineKeyboardButton("3부", callback_data="ybu:3부"),
+         InlineKeyboardButton("4부", callback_data="ybu:4부")],
+        [InlineKeyboardButton("5부", callback_data="ybu:5부"),
+         InlineKeyboardButton("6부", callback_data="ybu:6부"),
+         InlineKeyboardButton("7부", callback_data="ybu:7부")],
+        [InlineKeyboardButton("📚 대학부", callback_data="ybu:대학부"),
+         InlineKeyboardButton("🌱 새신자부", callback_data="ybu:새신자부")],
+        [InlineKeyboardButton("⚙️ 기능과", callback_data="ybu:기능과")],
+    ])
+
+
+def function_dept_keyboard():
+    """기능과 10개 부서"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👑 회장단", callback_data="fdept:회장단"),
+         InlineKeyboardButton("🏫 총교관", callback_data="fdept:총교관")],
+        [InlineKeyboardButton("📋 기획문화과", callback_data="fdept:기획문화과"),
+         InlineKeyboardButton("💬 상담심방과", callback_data="fdept:상담심방과")],
+        [InlineKeyboardButton("📖 교육과", callback_data="fdept:교육과"),
+         InlineKeyboardButton("⚽ 사업체육과", callback_data="fdept:사업체육과")],
+        [InlineKeyboardButton("🤝 섭외과", callback_data="fdept:섭외과"),
+         InlineKeyboardButton("🚗 봉사교통과", callback_data="fdept:봉사교통과")],
+        [InlineKeyboardButton("✈️ 해외전도과", callback_data="fdept:해외전도과"),
+         InlineKeyboardButton("📣 전도과", callback_data="fdept:전도과")],
+    ])
+
+
+def chairman_keyboard(group: str = ""):
+    """회장단/새신자부 버튼 (부녀회/장년회/자문회용)
+    부녀회만 3040부 버튼 추가"""
+    rows = [
+        [InlineKeyboardButton("👑 회장단", callback_data="chair:회장단"),
+         InlineKeyboardButton("🌱 새신자부", callback_data="chair:새신자부")],
+    ]
+    if group == "부녀회":
+        rows.append(
+            [InlineKeyboardButton("✨ 3040부", callback_data="chair:3040")]
+        )
+    return InlineKeyboardMarkup(rows)
+
+
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
         [
@@ -53,7 +101,7 @@ def main_menu_keyboard():
         ],
         [
             InlineKeyboardButton("📊 내 기록", callback_data="me"),
-            InlineKeyboardButton("➕ 다음기록 넣기", callback_data="restart"),
+            InlineKeyboardButton("➕ 다음 기록 넣기", callback_data="restart"),
         ],
     ])
 
@@ -79,22 +127,66 @@ def fetch_profile(user_id: int):
 
 
 def format_team_label(profile: dict) -> str:
-    """프로필 → '2부 3팀 5구역' 또는 '교육부' 형태"""
+    """프로필 → 표시용 라벨"""
     group = profile.get("group", "")
+
+    # 교역자: 부서 텍스트
     if group == "교역자":
         dept = profile.get("dept", "")
         return dept if dept else ""
 
-    parts = []
+    # 청년회
+    if group == "청년회":
+        bu = profile.get("bu")
+        gu = profile.get("gu")
+        dept = profile.get("dept", "")
+
+        bu_str = ""
+        if bu not in (None, "", 0):
+            bu_str = str(bu)
+            if bu_str.isdigit():
+                bu_str = f"{bu_str}부"
+
+        # 기능과 → "기능과 / 부서"
+        if bu_str == "기능과" and dept:
+            return f"{bu_str} {dept}"
+
+        parts = [bu_str] if bu_str else []
+        if gu not in (None, "", 0):
+            gu_str = str(gu)
+            if gu_str.isdigit():
+                gu_str = f"{gu_str}구역"
+            parts.append(gu_str)
+        return " ".join(parts)
+
+    # 부녀회/장년회/자문회
     bu = profile.get("bu")
     team = profile.get("team")
     gu = profile.get("gu")
+
+    # 회장단
+    if str(bu) == "회장단":
+        return "회장단"
+
+    parts = []
     if bu not in (None, "", 0):
-        parts.append(f"{bu}부")
+        bu_str = str(bu)
+        if bu_str.isdigit():
+            bu_str = f"{bu_str}부"
+        elif bu_str == "3040":
+            bu_str = "3040부"
+        # "새신자부"는 그대로
+        parts.append(bu_str)
     if team not in (None, "", 0):
-        parts.append(f"{team}팀")
+        team_str = str(team)
+        if team_str.isdigit():
+            team_str = f"{team_str}팀"
+        parts.append(team_str)
     if gu not in (None, "", 0):
-        parts.append(f"{gu}구역")
+        gu_str = str(gu)
+        if gu_str.isdigit():
+            gu_str = f"{gu_str}구역"
+        parts.append(gu_str)
     return " ".join(parts)
 
 
@@ -232,13 +324,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"어느 부서이신가요?\n"
                 f"(예: 교육부, 청년부, 행정부)"
             )
+        elif group == "청년회":
+            context.user_data["stage"] = "reg_youth_bu"
+            await update.message.reply_text(
+                f"{text}님, 반가워요! 😊\n\n"
+                f"어느 부이신가요?",
+                reply_markup=youth_bu_keyboard(),
+            )
         else:
-            # 부녀회/장년회/청년회/자문회 모두 부부터 시작
+            # 부녀회/장년회/자문회
             context.user_data["stage"] = "reg_bu"
+            if group == "부녀회":
+                extra_btn_text = "👑 회장단 / 🌱 새신자부 / ✨ 3040부는 아래 버튼!"
+            else:
+                extra_btn_text = "👑 회장단 / 🌱 새신자부는 아래 버튼!"
+
             await update.message.reply_text(
                 f"{text}님, 반가워요! 😊\n\n"
                 f"몇 부이신가요?\n"
-                f"(숫자만 입력. 예: 2)"
+                f"숫자만 입력 (예: 2)\n\n"
+                f"{extra_btn_text}",
+                reply_markup=chairman_keyboard(group),
             )
         return
 
@@ -251,26 +357,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await save_profile(update, context)
         return
 
-    # ── 등록: 부 ──
+    # ── 등록: 부 (부녀회/장년회/자문회) ──
     if stage == "reg_bu":
         bu = parse_number(text)
         if bu is None:
-            await update.message.reply_text("❗ 숫자만 입력해주세요. (예: 2)")
+            group = context.user_data.get("reg_group", "")
+            extra = "💡 3040부는 아래 ✨3040부 버튼\n" if group == "부녀회" else ""
+            await update.message.reply_text(
+                "❗ 숫자만 입력해주세요. (예: 2)\n"
+                f"{extra}"
+                "💡 회장단/새신자부는 아래 버튼"
+            )
             return
         context.user_data["reg_bu"] = bu
-
-        # 🆕 청년회는 팀 건너뛰고 바로 구역으로!
-        group = context.user_data.get("reg_group")
-        if group == "청년회":
-            context.user_data["stage"] = "reg_gu"
-            await update.message.reply_text(
-                f"{bu}부 ✅\n\n몇 구역이신가요?\n(숫자만 입력. 예: 5)"
-            )
-        else:
-            context.user_data["stage"] = "reg_team"
-            await update.message.reply_text(
-                f"{bu}부 ✅\n\n몇 팀이신가요?\n(숫자만 입력. 예: 3)"
-            )
+        context.user_data["stage"] = "reg_team"
+        await update.message.reply_text(
+            f"{bu}부 ✅\n\n몇 팀이신가요?\n(숫자만 입력. 예: 3)"
+        )
         return
 
     # ── 등록: 팀 ──
@@ -281,7 +384,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         context.user_data["reg_team"] = team
         context.user_data["stage"] = "reg_gu"
-        await update.message.reply_text(f"{team}팀 ✅\n\n몇 구역이신가요?\n(숫자만 입력. 예: 5)")
+        await update.message.reply_text(
+            f"{team}팀 ✅\n\n몇 구역이신가요?\n(숫자만 입력. 예: 5)"
+        )
         return
 
     # ── 등록: 구역 → 저장 ──
@@ -294,8 +399,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await save_profile(update, context)
         return
 
-    # ── 일반: 등록 안 됐으면 안내 ──
-    reg_stages = ("reg_group", "reg_name", "reg_bu", "reg_team", "reg_gu", "reg_dept")
+    # ── 일반 ──
+    reg_stages = ("reg_group", "reg_name", "reg_bu", "reg_team", "reg_gu",
+                  "reg_dept", "reg_youth_bu", "reg_youth_fdept")
     if "profile" not in context.user_data and stage not in reg_stages:
         profile = fetch_profile(user.id)
         if not profile:
@@ -329,8 +435,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─────────────── 프로필 저장 ───────────────
-async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
+async def save_profile(update_or_query, context: ContextTypes.DEFAULT_TYPE):
+    """update 또는 callback_query 둘 다 받을 수 있게"""
+    # callback_query 에는 .from_user 가 직접 있고,
+    # update.message 의 경우는 message.from_user 에 있음
+    if hasattr(update_or_query, 'from_user') and not hasattr(update_or_query, 'effective_message'):
+        # callback_query
+        user = update_or_query.from_user
+        message = update_or_query.message
+    else:
+        # update
+        user = update_or_query.message.from_user
+        message = update_or_query.message
+
     group = context.user_data.get("reg_group", "")
     name = context.user_data.get("reg_name", "")
     bu = context.user_data.get("reg_bu", "")
@@ -350,7 +467,7 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "dept": dept,
     }
 
-    processing = await update.message.reply_text("⏳ 등록 중이에요...")
+    processing = await message.reply_text("⏳ 등록 중이에요...")
 
     try:
         res = requests.post(APPS_SCRIPT_URL, json=payload, timeout=15)
@@ -377,7 +494,7 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if team_label:
             sub += f" / {team_label}"
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"✅ 등록 완료!\n\n"
             f"👤 {name}\n"
             f"🏷 {sub}\n\n"
@@ -389,7 +506,7 @@ async def save_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.exception("프로필 저장 실패")
         try: await processing.delete()
         except: pass
-        await update.message.reply_text("❌ 등록 실패. 다시 시도해주세요.\n/start")
+        await message.reply_text("❌ 등록 실패. 다시 시도해주세요.\n/start")
         context.user_data.clear()
 
 
@@ -479,6 +596,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = query.data
     user = query.from_user
 
+    # 소속 선택
     if action.startswith("grp:"):
         group = action.split(":", 1)[1]
         context.user_data["reg_group"] = group
@@ -490,6 +608,71 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 청년회 부 선택
+    if action.startswith("ybu:"):
+        bu = action.split(":", 1)[1]
+        context.user_data["reg_bu"] = bu
+
+        if bu == "기능과":
+            context.user_data["stage"] = "reg_youth_fdept"
+            await query.message.reply_text(
+                f"⚙️ 기능과 ✅\n\n"
+                f"어느 과이신가요?",
+                reply_markup=function_dept_keyboard(),
+            )
+        else:
+            context.user_data["stage"] = "reg_gu"
+            await query.message.reply_text(
+                f"{bu} ✅\n\n"
+                f"몇 구역이신가요?\n"
+                f"(숫자만 입력. 예: 5)"
+            )
+        return
+
+    # 청년회 기능과 부서 선택 → 바로 저장
+    if action.startswith("fdept:"):
+        dept = action.split(":", 1)[1]
+        context.user_data["reg_dept"] = dept
+        context.user_data["reg_gu"] = ""
+        await save_profile(query, context)
+        return
+
+    # 회장단/새신자부/3040부 버튼 (부녀회/장년회/자문회)
+    if action.startswith("chair:"):
+        choice = action.split(":", 1)[1]
+
+        if choice == "회장단":
+            # 팀/구역 없이 바로 저장
+            context.user_data["reg_bu"] = "회장단"
+            context.user_data["reg_team"] = ""
+            context.user_data["reg_gu"] = ""
+            await save_profile(query, context)
+            return
+
+        elif choice == "새신자부":
+            # 새신자부 → 구역 입력 받기
+            context.user_data["reg_bu"] = "새신자부"
+            context.user_data["reg_team"] = ""
+            context.user_data["stage"] = "reg_gu"
+            await query.message.reply_text(
+                f"🌱 새신자부 ✅\n\n"
+                f"몇 구역이신가요?\n"
+                f"(숫자만 입력. 예: 5)"
+            )
+            return
+
+        elif choice == "3040":
+            # 3040부 → 구역 입력 (팀 없음)
+            context.user_data["reg_bu"] = "3040"
+            context.user_data["reg_team"] = ""
+            context.user_data["stage"] = "reg_gu"
+            await query.message.reply_text(
+                f"✨ 3040부 ✅\n\n"
+                f"몇 구역이신가요?\n"
+                f"(숫자만 입력. 예: 5)"
+            )
+            return
+
     if action == "restart":
         if "profile" not in context.user_data:
             profile = fetch_profile(user.id)
@@ -499,7 +682,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for k in ["photo_b64", "steps"]:
             context.user_data.pop(k, None)
         await query.message.reply_text(
-            "👟 새 등록을 시작할게요!\n인증사진을 올려주세요 📸"
+            "👟 다음 기록을 넣어볼게요!\n인증사진을 올려주세요 📸"
         )
         return
 
