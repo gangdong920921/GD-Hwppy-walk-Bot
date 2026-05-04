@@ -79,6 +79,25 @@ def function_dept_keyboard():
     ])
 
 
+def youth_7bu_gu_keyboard():
+    """청년회 7부 구역 선택 (1~11구역, 국제부, 부장가편)"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1구역", callback_data="y7gu:1"),
+         InlineKeyboardButton("2구역", callback_data="y7gu:2"),
+         InlineKeyboardButton("3구역", callback_data="y7gu:3"),
+         InlineKeyboardButton("4구역", callback_data="y7gu:4")],
+        [InlineKeyboardButton("5구역", callback_data="y7gu:5"),
+         InlineKeyboardButton("6구역", callback_data="y7gu:6"),
+         InlineKeyboardButton("7구역", callback_data="y7gu:7"),
+         InlineKeyboardButton("8구역", callback_data="y7gu:8")],
+        [InlineKeyboardButton("9구역", callback_data="y7gu:9"),
+         InlineKeyboardButton("10구역", callback_data="y7gu:10"),
+         InlineKeyboardButton("11구역", callback_data="y7gu:11")],
+        [InlineKeyboardButton("🌐 국제부 구역", callback_data="y7gu:국제부"),
+         InlineKeyboardButton("📋 부장가편 구역", callback_data="y7gu:부장가편")],
+    ])
+
+
 def chairman_keyboard(group: str = ""):
     """회장단/새신자부 버튼 (부녀회/장년회/자문회용)
     부녀회만 3040부 버튼 추가"""
@@ -156,6 +175,9 @@ def format_team_label(profile: dict) -> str:
             gu_str = str(gu)
             if gu_str.isdigit():
                 gu_str = f"{gu_str}구역"
+            elif gu_str in ("국제부", "부장가편"):
+                # 7부의 특수 구역
+                gu_str = f"{gu_str} 구역"
             parts.append(gu_str)
         return " ".join(parts)
 
@@ -401,7 +423,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── 일반 ──
     reg_stages = ("reg_group", "reg_name", "reg_bu", "reg_team", "reg_gu",
-                  "reg_dept", "reg_youth_bu", "reg_youth_fdept")
+                  "reg_dept", "reg_youth_bu", "reg_youth_fdept", "reg_youth_7gu")
     if "profile" not in context.user_data and stage not in reg_stages:
         profile = fetch_profile(user.id)
         if not profile:
@@ -620,6 +642,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"어느 과이신가요?",
                 reply_markup=function_dept_keyboard(),
             )
+        elif bu == "7부":
+            # 🆕 7부는 구역 버튼 (1~11, 국제부, 부장가편)
+            context.user_data["stage"] = "reg_youth_7gu"
+            await query.message.reply_text(
+                f"7부 ✅\n\n"
+                f"어느 구역이신가요?",
+                reply_markup=youth_7bu_gu_keyboard(),
+            )
         else:
             context.user_data["stage"] = "reg_gu"
             await query.message.reply_text(
@@ -627,6 +657,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"몇 구역이신가요?\n"
                 f"(숫자만 입력. 예: 5)"
             )
+        return
+
+    # 🆕 청년회 7부 구역 선택 → 바로 저장
+    if action.startswith("y7gu:"):
+        gu = action.split(":", 1)[1]
+        # 숫자면 int로, 아니면 텍스트 그대로 (국제부/부장가편)
+        if gu.isdigit():
+            context.user_data["reg_gu"] = int(gu)
+        else:
+            context.user_data["reg_gu"] = gu
+        await save_profile(query, context)
         return
 
     # 청년회 기능과 부서 선택 → 바로 저장
